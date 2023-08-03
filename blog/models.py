@@ -1,12 +1,34 @@
 from django.db import models
 from django.urls import reverse
 from django.contrib.auth.models import User
+from django.db.models import Count
 
 
 class PostQuerySet(models.QuerySet):
     def year(self, year):
         posts_at_year = self.filter(published_at__year=year).order_by('published_at')
         return posts_at_year
+    
+    def popular(self):
+        return self.prefetch_related('author').annotate(likes_count=Count('likes')).order_by('-likes_count')
+    
+    
+    def fetch_with_comments_count(self):
+        posts = self.prefetch_related('comments')
+        return list(posts)
+    #Функция fetch_with_comments_count возвращает список постов с предварительно загруженными комментариями,
+    # вместо использования annotate для аннотации количества комментариев.
+    
+
+class PostManager(models.Manager):
+    def get_queryset(self):
+        return PostQuerySet(self.model, using=self._db)
+
+    def popular(self):
+        return self.get_queryset().popular()
+
+    def fetch_with_comments_count(self):
+        return self.get_queryset().fetch_with_comments_count()
 
 
 class TagManager(models.Manager):
@@ -36,7 +58,7 @@ class Post(models.Model):
         related_name='posts',
         verbose_name='Теги')
     
-    objects = PostQuerySet.as_manager()
+    objects = PostManager()
 
     def __str__(self):
         return self.title
