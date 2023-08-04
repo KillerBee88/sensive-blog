@@ -14,8 +14,8 @@ class PostQuerySet(models.QuerySet):
     
     
     def fetch_with_comments_count(self):
-        posts = self.prefetch_related('comments')
-        return list(posts)
+        posts = self.prefetch_related('comments').all()
+        return posts
     #Функция fetch_with_comments_count возвращает список постов с предварительно загруженными комментариями,
     # вместо использования annotate для аннотации количества комментариев.
     
@@ -28,7 +28,7 @@ class PostManager(models.Manager):
         return self.get_queryset().popular()
 
     def fetch_with_comments_count(self):
-        return self.get_queryset().fetch_with_comments_count()
+        return self.get_queryset().fetch_with_comments_count()  
 
 
 class TagManager(models.Manager):
@@ -76,6 +76,10 @@ class Tag(models.Model):
     title = models.CharField('Тег', max_length=20, unique=True)
     
     objects = TagManager()
+
+
+    def posts_with_tag(self):
+        return self.posts.count()
 
     def __str__(self):
         return self.title
