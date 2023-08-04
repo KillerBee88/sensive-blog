@@ -44,14 +44,12 @@ def serialize_post_optimized(post):
 def serialize_tag(tag):
     return {
         'title': tag.title,
-        'posts_with_tag': tag.num_posts,
+        'posts_with_tag': tag.posts_with_tag,
     }
 
 
 def index(request):
-    most_popular_posts = Post.objects.popular().fetch_with_comments_count().prefetch_related(
-        Prefetch('tags', queryset=Tag.objects.annotate(num_posts=Count('posts'))),
-    )
+    most_popular_posts = Post.objects.popular()[:5].fetch_with_comments_count()
 
     post_ids = [post.id for post in most_popular_posts]
 
