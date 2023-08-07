@@ -2,30 +2,8 @@ from django.shortcuts import render
 from blog.models import Comment, Post, Tag
 from django.db.models import Count, Prefetch
 
-
-def get_likes_count(post):
-       return post.likes.count()
-
-
-def get_related_posts_count(tag):
-    return tag.posts.count()
-
-
+    
 def serialize_post(post):
-    return {
-        'title': post.title,
-        'teaser_text': post.text[:200],
-        'author': post.author.username,
-        'comments_amount': Comment.objects.filter(post=post).count(),
-        'image_url': post.image.url if post.image else None,
-        'published_at': post.published_at,
-        'slug': post.slug,
-        'tags': [serialize_tag(tag) for tag in post.tags.all()],
-        'first_tag_title': post.tags.first().title if post.tags.exists() else None,
-    }
-    
-    
-def serialize_post_optimized(post):
     tags = list(post.tags.all())
     first_tag_title = tags[0].title if tags else None
     return {
@@ -59,7 +37,7 @@ def index(request):
     posts_with_tags = posts_with_tags.prefetch_related(tags_prefetch)
 
     serialized_posts = [
-        serialize_post_optimized(post) for post in most_popular_posts
+        serialize_post(post) for post in most_popular_posts
     ]
 
     popular_tags = Tag.objects.popular()[:5]
@@ -73,28 +51,36 @@ def index(request):
 
 
 def post_detail(request, slug):
-    post = Post.objects.select_related('author').prefetch_related('comments', 'tags').get(slug=slug)
-    comments = Comment.objects.filter(post=post).values_list('text', 'published_at', 'author__username')
+    post = Post.objects.select_related('author').prefetch_related(
+        'comments',
+        Prefetch('tags', queryset=Tag.objects.order_by('title'))
+    ).get(slug=slug)
 
-    likes = post.likes.all()
+    likes = post.likes.count()
 
-    related_tags = post.tags.all()
+    # Теги уже загружены с помощью Prefetch, поэтому просто преобразуем их в список
+    tags = list(post.tags.all())
+
+    # Используем prefetch_related для комментариев, чтобы избежать дополнительного запроса
+    comments = list(post.comments.all().values('text', 'published_at', 'author__username'))
 
     serialized_post = {
         'title': post.title,
         'text': post.text,
         'author': post.author.username,
-        'comments': list(comments),
-        'likes_amount': len(likes),
+        'comments': comments,
+        'likes_amount': likes,
         'image_url': post.image.url if post.image else None,
         'published_at': post.published_at,
         'slug': post.slug,
-        'tags': [serialize_tag(tag) for tag in related_tags],
+        'tags': [serialize_tag(tag) for tag in tags],
     }
 
     popular_tags = Tag.objects.popular()[:5]
 
-    most_popular_posts = Post.objects.popular()[:5].fetch_with_comments_count()
+    most_popular_posts = Post.objects.popular()[:5].prefetch_related(
+        Prefetch('tags', queryset=Tag.objects.order_by('title'))
+    )
 
     context = {
         'post': serialized_post,
@@ -111,7 +97,7 @@ def tag_filter(request, tag_title):
     tag = Tag.objects.get(title=tag_title)
 
     related_posts = Post.objects.filter(tags__id=tag.id).prefetch_related(
-        Prefetch('tags'),
+        Prefetch('tags', queryset=Tag.objects.order_by('title')),
         Prefetch('comments', queryset=Comment.objects.annotate(comments_count=Count('id')))
     ).select_related('author')
 
@@ -134,7 +120,12 @@ def tag_filter(request, tag_title):
         'tag': tag.title,
         'popular_tags': [serialize_tag(tag) for tag in Tag.objects.popular()[:5]],
         'posts': serialized_posts,
-        'most_popular_posts': [serialize_post_optimized(post) for post in Post.objects.popular()[:5].fetch_with_comments_count()],
+        'most_popular_posts': [
+            serialize_post(post) for post in Post.objects.popular()[:5].prefetch_related(
+                Prefetch('tags', queryset=Tag.objects.order_by('title')),
+                Prefetch('comments', queryset=Comment.objects.annotate(comments_count=Count('id')))
+            ).select_related('author')
+        ],
     }
 
     return render(request, 'posts-list.html', context)
