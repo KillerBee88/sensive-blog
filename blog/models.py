@@ -1,39 +1,40 @@
 from django.db import models
 from django.urls import reverse
 from django.contrib.auth.models import User
-from django.db.models import Count
+
+
+class TagQuerySet(models.QuerySet):
+
+    def popular(self):
+        return self.annotate(posts_count=models.Count('posts')) \
+                   .order_by('-posts_count')
 
 
 class PostQuerySet(models.QuerySet):
-    def year(self, year):
-        posts_at_year = self.filter(published_at__year=year).order_by('published_at')
-        return posts_at_year
-    
-    def popular(self):
-        return self.prefetch_related('author').annotate(likes_count=Count('likes')).order_by('-likes_count')
-    
-    
-    def fetch_with_comments_count(self):
-        posts = self.prefetch_related('comments').all()
-        return posts
-    #Функция fetch_with_comments_count возвращает список постов с предварительно загруженными комментариями,
-    # вместо использования annotate для аннотации количества комментариев.
-    
-
-class PostManager(models.Manager):
-    def get_queryset(self):
-        return PostQuerySet(self.model, using=self._db)
 
     def popular(self):
-        return self.get_queryset().popular()
+        return self.annotate(likes_count=models.Count('likes', distinct=True))\
+                   .order_by('-likes_count')
 
     def fetch_with_comments_count(self):
-        return self.get_queryset().fetch_with_comments_count()  
+        """
+        Функция fetch_with_comments_count возвращает список постов с предварительно загруженными комментариями,
+        вместо использования annotate для аннотации количества комментариев.
+        """
+        posts_ids = [post.id for post in self]
+        posts_with_comments = Post.objects \
+                                  .filter(id__in=posts_ids) \
+                                  .annotate(comments_count=models.Count('comments'))
 
+        ids_and_comments = posts_with_comments.values_list('id', 'comments_count')
+        count_for_id = dict(ids_and_comments)
+        for post in self:
+            post.comments_count = count_for_id[post.id]
+        return self
 
-class TagManager(models.Manager):
-    def popular(self):
-        return self.annotate(num_posts=models.Count('posts')).order_by('-num_posts')
+    def fetch_with_tags(self):
+        tags = models.Prefetch('tags', queryset=Tag.objects.annotate(posts_count=models.Count('posts')))
+        return self.prefetch_related(tags)
 
 
 class Post(models.Model):
@@ -57,8 +58,13 @@ class Post(models.Model):
         'Tag',
         related_name='posts',
         verbose_name='Теги')
-    
-    objects = PostManager()
+
+    objects = PostQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['-published_at']
+        verbose_name = 'пост'
+        verbose_name_plural = 'посты'
 
     def __str__(self):
         return self.title
@@ -66,20 +72,16 @@ class Post(models.Model):
     def get_absolute_url(self):
         return reverse('post_detail', args={'slug': self.slug})
 
-    class Meta:
-        ordering = ['-published_at']
-        verbose_name = 'пост'
-        verbose_name_plural = 'посты'
-
 
 class Tag(models.Model):
     title = models.CharField('Тег', max_length=20, unique=True)
-    
-    objects = TagManager()
 
+    objects = TagQuerySet.as_manager()
 
-    def posts_with_tag(self):
-        return self.posts.count()
+    class Meta:
+        ordering = ['title']
+        verbose_name = 'тег'
+        verbose_name_plural = 'теги'
 
     def __str__(self):
         return self.title
@@ -90,19 +92,13 @@ class Tag(models.Model):
     def get_absolute_url(self):
         return reverse('tag_filter', args={'tag_title': self.slug})
 
-    class Meta:
-        ordering = ['title']
-        verbose_name = 'тег'
-        verbose_name_plural = 'теги'
-
 
 class Comment(models.Model):
     post = models.ForeignKey(
         'Post',
         on_delete=models.CASCADE,
-        verbose_name='Пост, к которому написан',
-        related_name='comments')
-
+        related_name='comments',
+        verbose_name='Пост, к которому написан')
     author = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -111,10 +107,10 @@ class Comment(models.Model):
     text = models.TextField('Текст комментария')
     published_at = models.DateTimeField('Дата и время публикации')
 
-    def __str__(self):
-        return f'{self.author.username} under {self.post.title}'
-
     class Meta:
         ordering = ['published_at']
         verbose_name = 'комментарий'
         verbose_name_plural = 'комментарии'
+
+    def __str__(self):
+        return f'{self.author.username} under {self.post.title}'
